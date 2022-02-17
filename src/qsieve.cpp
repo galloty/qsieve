@@ -411,8 +411,7 @@ public:
 		std::cout << bmap.size() / (8 << 20) << " MB" << std::endl;
 
 		PRArray pr_array;
-		uint64_t max = 10;
-		int log10_max = 1;
+		uint64_t last_p = 0;
 		double duration = 0;
 		auto t0 = std::chrono::steady_clock::now();
 
@@ -440,20 +439,18 @@ public:
 				{
 					const PR & pr = pr_array.pr[i];
 					const uint64_t p = pr.p, r = pr.r;
-					if (p < p_max)
-					{
-						if (p > max)
-						{
-							const auto t1 = std::chrono::steady_clock::now();
-							const std::chrono::duration<double> dt = t1 - t0;
-							t0 = t1; duration += dt.count();
-							const size_t expected = size_t(0.41252 * (k_max - k_min + 1) * _n_range / std::pow(std::log(double(max)), 4));
-							std::cout << "10^" << log10_max << ": " << bmap.count() << " candidates, " << expected << " expected, "
-									<< std::lrint(duration) << " (" << std::lrint(dt.count()) << ") sec." << std::endl;
-							max *= 10; ++log10_max;
-						}
-						sieve(bmap, p, r);
-					}
+					if (duration == 0) { std::cout << p << "\r"; std::cout.flush(); }
+					if (p < p_max) { last_p = p; sieve(bmap, p, r); }
+				}
+
+				const auto t1 = std::chrono::steady_clock::now();
+				const std::chrono::duration<double> dt = t1 - t0;
+				if ((dt.count() > 5 * 60) || (duration == 0))
+				{
+					t0 = t1; duration += dt.count();
+					const size_t expected = size_t(0.41252 * (k_max - k_min + 1) * _n_range / std::pow(std::log(double(last_p)), 4));
+					std::cout << std::scientific << std::setprecision(2) << double(last_p) << ": ";
+					std::cout << bmap.count() << " candidates, " << expected << " expected, " << std::lrint(duration) << " sec." << std::endl;
 				}
 			}
 		}
@@ -461,8 +458,8 @@ public:
 		const std::chrono::duration<double> dt = std::chrono::steady_clock::now() - t0;
 		duration += dt.count();
 		const size_t expected = size_t(0.41252 * (k_max - k_min + 1) * _n_range / std::pow(std::log(double(p_max)), 4));
-		std::cout << p_max << ": " << bmap.count() << " candidates, " << expected << " expected, "
-				<< std::lrint(duration) << " (" << std::lrint(dt.count()) << ") sec." << std::endl;
+		std::cout << std::scientific << std::setprecision(2) << double(p_max) << ": ";
+		std::cout << bmap.count() << " candidates, " << expected << " expected, " << std::lrint(duration) << " sec." << std::endl;
 
 		for (size_t k = 0; k < _k_range; ++k)
 		{

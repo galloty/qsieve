@@ -5,7 +5,7 @@ A Quad Sieve for the search for twin and Sophie Germain primes
 
 Search for quadruples (*k* 2<sup>*n* - 1</sup> - 1, *k* 2<sup>*n*</sup> - 1, *k* 2<sup>*n*+1</sup> - 1, *k* 2<sup>*n*</sup> + 1) such that neither of them has a small factor.
 
-We must have *k* = 15 (mod 30). If the sieve range is *k*<sub>*min*</sub> = 3, *k*<sub>*max*</sub> = 2<sup>32</sup>, *n*<sub>*min*</sub> = 3321925 and *n*<sub>*max*</sub> = *n*<sub>*min*</sub> + 63 then the bitmap size is 1 gigabyte.
+We must have *k* = 15 (mod 30). If the sieved range is *k*<sub>*min*</sub> = 3, *k*<sub>*max*</sub> = 2<sup>32</sup>, *n*<sub>*min*</sub> = 3321925 and *n*<sub>*max*</sub> = *n*<sub>*min*</sub> + 63 then the bitmap size is 1 gigabyte.
 
 *qsieve* is multithreaded:
 - Thread 1 is a pseudo prime number generator based on a segmented sieve of Eratosthenes.

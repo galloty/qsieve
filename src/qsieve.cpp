@@ -118,7 +118,7 @@ public:
 		return r;
 	}
 
-	res4 oneHalfPow(const uint64_t e) const
+	res4 oneHalf_pow(const uint64_t e) const
 	{
 		res4 r;
 		for (size_t i = 0; i < 4; ++i) r[i] = (_p[i] + 1) / 2;
@@ -157,6 +157,53 @@ public:
 	}
 };
 
+template<typename T>
+class fifo
+{
+private:
+	static const size_t max_queue_size = 1024;
+
+	std::mutex _mutex;
+	std::queue<T> _queue;
+	bool _end = false;
+
+public:
+	void end() { std::lock_guard<std::mutex> guard(_mutex); _end = true; }
+
+	void push(const T & val)
+	{
+		_mutex.lock();
+		while (_queue.size() >= max_queue_size)
+		{
+			_mutex.unlock();
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			_mutex.lock();
+		}
+		_queue.push(val);
+		_mutex.unlock();
+	}
+
+	bool pop(T & val)
+	{
+		_mutex.lock();
+		while (_queue.empty())
+		{
+			_mutex.unlock();
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			_mutex.lock();
+			if (_end)
+			{
+				_mutex.unlock();
+				return false;
+			}
+		}
+		val = _queue.front();
+		_queue.pop();
+		_mutex.unlock();
+		return true;
+	}
+};
+
 class qsieve
 {
 private:
@@ -168,27 +215,13 @@ private:
 
 	static const size_t p_size = 1024;
 
-	struct PArray
-	{
-		uint64_t p[p_size];	// 8 KB
-	};
+	struct PArray { uint64_t p[p_size]; };
 
 	struct PR { uint64_t p, r; };
+	struct PRArray { PR pr[p_size]; };
 
-	struct PRArray
-	{
-		PR pr[p_size];
-	};
-
-	static const size_t max_queue_size = 1024;
-
-	std::mutex _p_queue_mutex;
-	std::queue<PArray> _p_queue;
-
-	std::mutex _pr_queue_mutex;
-	std::queue<PRArray> _pr_queue;
-
-	bool _end_p = false, _end_r = false;
+	fifo<PArray> _p_queue;
+	fifo<PRArray> _pr_queue;
 
 private:
 	void gen_p()
@@ -240,7 +273,6 @@ private:
 
 		PArray p_array;
 		size_t p_array_i = 0;
-		size_t queue_size = 0;
 
 		for (uint64_t jp = p0; true; jp += sp_max)
 		{
@@ -255,12 +287,10 @@ private:
 						p_array_i = (p_array_i + 1) % p_size;
 						if (p_array_i == 0)
 						{
-							std::lock_guard<std::mutex> guard(_p_queue_mutex);
 							_p_queue.push(p_array);
-							queue_size = _p_queue.size();
 							if (p >= p1)
 							{
-								_end_p = true;
+								_p_queue.end();
 								return;
 							}
 						}
@@ -276,93 +306,56 @@ private:
 				for (; k < sieve_size; k += p) sieve[k] = true;
 				prm_ptr[i] = uint32_t(k - sieve_size);
 			}
-
-			while (queue_size > max_queue_size)
-			{
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				std::lock_guard<std::mutex> guard(_p_queue_mutex);
-				queue_size = _p_queue.size();
-			}
 		}
 	}
 
 	void gen_r()
 	{
-		PArray p_array;
-		size_t queue_size = 0;
-
 		while (true)
 		{
-			bool found = false;
+			PArray p_array;
+			if (!_p_queue.pop(p_array)) { _pr_queue.end(); break; }
+
+			PRArray pr_array;
+			for (size_t i = 0; i < p_size; i += 4)
 			{
-				std::lock_guard<std::mutex> guard(_p_queue_mutex);
-				if (!_p_queue.empty())
+				res4 p; for (size_t j = 0; j < 4; ++j) p[j] = p_array.p[i + j];
+				const mod4 m = mod4(p);
+
+				// r = 1/2^(n_min - 1) / 15 (mod p)
+				const res4 r = m.mul(m.oneHalf_pow(_n_min - 1), m.oneFifteenth());
+				for (size_t j = 0; j < 4; ++j)
 				{
-					found = true;
-					p_array = _p_queue.front();
-					_p_queue.pop();
+					PR & pr = pr_array.pr[i + j];
+					pr.p = p[j]; pr.r = r[j];
 				}
 			}
-
-			if (!found)
-			{
-				if (_end_p) { _end_r = true; return; }
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			}
-			else
-			{
-				PRArray pr_array;
-
-				for (size_t i = 0; i < p_size; i += 4)
-				{
-					res4 p; for (size_t j = 0; j < 4; ++j) p[j] = p_array.p[i + j];
-					const mod4 m = mod4(p);
-
-					// r = 1/2^(n_min - 1) / 15 (mod p)
-					const res4 r = m.mul(m.oneHalfPow(_n_min - 1), m.oneFifteenth());
-					for (size_t j = 0; j < 4; ++j)
-					{
-						PR & pr = pr_array.pr[i + j];
-						pr.p = p[j]; pr.r = r[j];
-					}
-				}
-
-				std::lock_guard<std::mutex> guard(_pr_queue_mutex);
-				_pr_queue.push(pr_array);
-				queue_size = _pr_queue.size();
-			}
-
-			while (queue_size > max_queue_size)
-			{
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				std::lock_guard<std::mutex> guard(_pr_queue_mutex);
-				queue_size = _pr_queue.size();
-			}
+			_pr_queue.push(pr_array);
 		}
 	}
 
-	static uint64_t kpos(const uint64_t p, const uint64_t k_0, const uint64_t r) { return half_mod(sub_mod(r, k_0, p), p); }
-	static uint64_t kneg(const uint64_t p, const uint64_t k_0, const uint64_t r) { return half_mod(neg_mod(add_mod(r, k_0, p), p), p); }
+	static size_t kpos(const uint64_t p, const uint64_t k_0, const uint64_t r) { return size_t(half_mod(sub_mod(r, k_0, p), p)); }
+	static size_t kneg(const uint64_t p, const uint64_t k_0, const uint64_t r) { return size_t(half_mod(neg_mod(add_mod(r, k_0, p), p), p)); }
 
 	void sieve(bitmap & bmap, const uint64_t p, const uint64_t r_0)
 	{
-		const size_t k_range = _k_range;
 		const uint64_t k_0 = (_k_min / 15) % p;
+		const size_t k_range = _k_range;
 
 		uint64_t r = r_0;	// r = 1/2^(n_min - 1) / 15 (mod p)
 
-		for (uint64_t k = kpos(p, k_0, r); k < k_range; k += p)
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
 		{
 			bmap.set(k, -1 + 1);
 		}
 		r = half_mod(r, p);	// r = 1/2^n_min / 15 (mod p)
 
-		for (uint64_t k = kpos(p, k_0, r); k < k_range; k += p)
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
 		{
 			bmap.set(k, 0);
 			bmap.set(k, 0 + 1);
 		}
-		for (uint64_t k = kneg(p, k_0, r); k < k_range; k += p)
+		for (size_t k = kneg(p, k_0, r); k < k_range; k += p)
 		{
 			bmap.set(k, 0);
 		}
@@ -370,31 +363,31 @@ private:
 
 		for (size_t n = 1; n < _n_range - 1; ++n)
 		{
-			for (uint64_t k = kpos(p, k_0, r); k < k_range; k += p)
+			for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
 			{
 				bmap.set(k, n - 1);
 				bmap.set(k, n);
 				bmap.set(k, n + 1);
 			}
-			for (uint64_t k = kneg(p, k_0, r); k < k_range; k += p)
+			for (size_t k = kneg(p, k_0, r); k < k_range; k += p)
 			{
 				bmap.set(k, n);
 			}
 			r = half_mod(r, p);	// 1/2^(n_min + n) / 15 (mod p)
 		}
 
-		for (uint64_t k = kpos(p, k_0, r); k < k_range; k += p)
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
 		{
 			bmap.set(k, _n_range - 1 - 1);
 			bmap.set(k, _n_range - 1);
 		}
-		for (uint64_t k = kneg(p, k_0, r); k < k_range; k += p)
+		for (size_t k = kneg(p, k_0, r); k < k_range; k += p)
 		{
 			bmap.set(k, _n_range - 1);
 		}
 		r = half_mod(r, p);	// 1/2^(n_min + _n_range) / 15 (mod p)
 
-		for (uint64_t k = kpos(p, k_0, r); k < k_range; k += p)
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
 		{
 			bmap.set(k, _n_range - 1);
 		}
@@ -415,55 +408,38 @@ public:
 
 		std::cout << "Bitmap size: " << bmap.size() / (8 << 20) << " MB" << std::endl;
 
-		PRArray pr_array;
-		uint64_t last_p = 0;
+		uint64_t last_p = 0, last_p0 = 0;
 		double duration = 0;
 		auto t0 = std::chrono::steady_clock::now();
 
 		while (true)
 		{
-			bool found = false;
+			PRArray pr_array;
+			if (!_pr_queue.pop(pr_array)) break;
+
+			for (size_t i = 0; i < p_size; ++i)
 			{
-				std::lock_guard<std::mutex> guard(_pr_queue_mutex);
-				if (!_pr_queue.empty())
-				{
-					found = true;
-					pr_array = _pr_queue.front();
-					_pr_queue.pop();
-				}
+				const PR & pr = pr_array.pr[i];
+				const uint64_t p = pr.p, r = pr.r;
+				if (duration == 0) { std::cout << p << "\r"; std::cout.flush(); }
+				if (p < p_max) { last_p = p; sieve(bmap, p, r); }
 			}
 
-			if (!found)
+			const auto t1 = std::chrono::steady_clock::now();
+			const double dt = std::chrono::duration<double>(t1 - t0).count();
+			if ((dt > 15 * 60) || (duration == 0))
 			{
-				if (_end_r) break;
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			}
-			else
-			{
-				for (size_t i = 0; i < p_size; ++i)
-				{
-					const PR & pr = pr_array.pr[i];
-					const uint64_t p = pr.p, r = pr.r;
-					if (duration == 0) { std::cout << p << "\r"; std::cout.flush(); }
-					if (p < p_max) { last_p = p; sieve(bmap, p, r); }
-				}
-
-				const auto t1 = std::chrono::steady_clock::now();
-				const std::chrono::duration<double> dt = t1 - t0;
-				if ((dt.count() > 15 * 60) || (duration == 0))
-				{
-					t0 = t1; duration += dt.count();
-					const size_t expected = size_t(0.41252 * (k_max - k_min + 1) * _n_range / std::pow(std::log(double(last_p)), 4));
-					std::cout << std::scientific << std::setprecision(2) << double(last_p) << ": ";
-					std::cout << bmap.count() << " candidates, " << expected << " expected, " << std::lrint(duration) << " sec." << std::endl;
-				}
+				std::cout << std::scientific << std::setprecision(2) << double(last_p) << " (+" << double(last_p - last_p0) << "): ";
+				duration += dt; last_p0 = last_p; t0 = t1;
+				const size_t expected = size_t(0.41252 * (k_max - k_min + 1) * _n_range / std::pow(std::log(double(last_p)), 4));
+				std::cout << bmap.count() << " candidates, " << expected << " expected, " << std::lrint(duration) << " sec." << std::endl;
 			}
 		}
 
-		const std::chrono::duration<double> dt = std::chrono::steady_clock::now() - t0;
-		duration += dt.count();
+		const double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+		std::cout << std::scientific << std::setprecision(2) << double(p_max) << " (+" << double(p_max - last_p0) << "): ";
+		duration += dt;
 		const size_t expected = size_t(0.41252 * (k_max - k_min + 1) * _n_range / std::pow(std::log(double(p_max)), 4));
-		std::cout << std::scientific << std::setprecision(2) << double(p_max) << ": ";
 		std::cout << bmap.count() << " candidates, " << expected << " expected, " << std::lrint(duration) << " sec." << std::endl;
 
 /*		for (size_t k = 0; k < _k_range; ++k)
@@ -489,6 +465,7 @@ int main(int argc, char * argv[])
 	std::cerr << " Usage: qsieve <p_max> <k_min> <k_max>" << std::endl << std::endl;
 
 	// uint64_t p_max = (argc > 1) ? std::atoll(argv[1]) : uint64_t(-1) / 4;
+	// uint64_t T = 1; for (size_t i = 0; i < 8; ++i) T *= 10;	// 6705 candidates for 1000000
 	uint64_t T = 1; for (size_t i = 0; i < 12; ++i) T *= 10;
 	uint64_t p_max = (argc > 1) ? std::atoll(argv[1]) : T;
 	if (p_max < 7) p_max = 7;
@@ -498,7 +475,7 @@ int main(int argc, char * argv[])
 	k_min /= 30; k_min *= 30; k_min += 15;
 
 	uint64_t k_max = (argc > 3) ? std::atoll(argv[3]) : k_min + 30 * uint64_t(143165576);
-	// uint64_t k_max = (argc > 3) ? std::atoll(argv[3]) : k_min + 30 * uint64_t(100000);
+	// uint64_t k_max = (argc > 3) ? std::atoll(argv[3]) : k_min + 30 * uint64_t(1000000);
 	k_max /= 30; k_max *= 30; k_max += 15;
 	if (k_max < k_min) k_max = k_min;
 

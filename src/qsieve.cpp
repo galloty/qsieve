@@ -132,27 +132,31 @@ public:
 	}
 };
 
-class bitmap
+class bitmap64
 {
 private:
-	const size_t _k_size, _n_size;
-	std::vector<bool> _bmp;
+	const size_t _k_size;
+	uint64_t * const _bmp;
 
 public:
-	bitmap(const size_t k_size, const size_t n_size) : _k_size(k_size), _n_size(n_size)
+	bitmap64(const size_t k_size) : _k_size(k_size), _bmp(new uint64_t[k_size])
 	{
-		_bmp.resize(k_size * n_size, false);
+		for (size_t k = 0; k < k_size; ++k) _bmp[k] = 0;
 	}
+	virtual ~bitmap64() { delete[] _bmp; }
 
-	bool get(const size_t k, const size_t n) const { const size_t i = n * _k_size + k; return _bmp[i]; }
-	void set(const size_t k, const size_t n) { const size_t i = n * _k_size + k; if (!_bmp[i]) _bmp[i] = true; }
+	bool get(const size_t k, const size_t n) const { const uint64_t m = uint64_t(1) << n; return (_bmp[k] & m) != 0; }
 
-	size_t size() const { return _bmp.size(); }
+	void set(const size_t k, const size_t n) { const uint64_t m = uint64_t(1) << n; if ((_bmp[k] & m) != m) _bmp[k] |= m; }
+	void set2(const size_t k, const size_t n) { const uint64_t m = uint64_t(3) << n; if ((_bmp[k] & m) != m) _bmp[k] |= m; }
+	void set3(const size_t k, const size_t n) { const uint64_t m = uint64_t(7) << n; if ((_bmp[k] & m) != m) _bmp[k] |= m; }
+
+	size_t size() const { return _k_size * 8 * sizeof(uint64_t); }
 
 	size_t count() const
 	{
-		size_t cnt = 0;
-		for (bool b : _bmp) cnt += b ? 0 : 1;
+		size_t cnt = size();
+		for (size_t k = 0, k_size = _k_size; k < k_size; ++k) cnt -= __builtin_popcountll(_bmp[k]);
 		return cnt;
 	}
 };
@@ -188,14 +192,14 @@ public:
 		_mutex.lock();
 		while (_queue.empty())
 		{
-			_mutex.unlock();
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			_mutex.lock();
 			if (_end)
 			{
 				_mutex.unlock();
 				return false;
 			}
+			_mutex.unlock();
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			_mutex.lock();
 		}
 		val = _queue.front();
 		_queue.pop();
@@ -210,7 +214,7 @@ private:
 	// From 3321925 to 3371925: zero-padded FMA3 FFT length 336K
 	const uint64_t _n_min = 3321925;
 	const size_t _n_range = 64;
-	const uint64_t _p_min, _p_max, _k_min, _k_max;
+	const uint64_t _p_min, _p_max, _k_min_15;
 	const size_t _k_range;
 
 	static const size_t p_size = 1024;
@@ -337,65 +341,38 @@ private:
 	static size_t kpos(const uint64_t p, const uint64_t k_0, const uint64_t r) { return size_t(half_mod(sub_mod(r, k_0, p), p)); }
 	static size_t kneg(const uint64_t p, const uint64_t k_0, const uint64_t r) { return size_t(half_mod(neg_mod(add_mod(r, k_0, p), p), p)); }
 
-	void sieve(bitmap & bmap, const uint64_t p, const uint64_t r_0)
+	void fill_sieve(bitmap64 & bmap, const uint64_t p, const uint64_t r_0)
 	{
-		const uint64_t k_0 = (_k_min / 15) % p;
+		const uint64_t k_0 = _k_min_15 % p;
 		const size_t k_range = _k_range;
 
 		uint64_t r = r_0;	// r = 1/2^(n_min - 1) / 15 (mod p)
 
-		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
-		{
-			bmap.set(k, -1 + 1);
-		}
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p) bmap.set(k, 0); // -1 - 1, -1, -1 + 1
+		// for (size_t k = kneg(p, k_0, r); k < k_range; k += p); // -1
 		r = half_mod(r, p);	// r = 1/2^n_min / 15 (mod p)
 
-		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
-		{
-			bmap.set(k, 0);
-			bmap.set(k, 0 + 1);
-		}
-		for (size_t k = kneg(p, k_0, r); k < k_range; k += p)
-		{
-			bmap.set(k, 0);
-		}
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p) bmap.set2(k, 0); // 0 - 1, 0, 0 + 1
+		for (size_t k = kneg(p, k_0, r); k < k_range; k += p) bmap.set(k, 0); // 0
 		r = half_mod(r, p);	// 1/2^(n_min + 1) / 15 (mod p)
 
 		for (size_t n = 1; n < _n_range - 1; ++n)
 		{
-			for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
-			{
-				bmap.set(k, n - 1);
-				bmap.set(k, n);
-				bmap.set(k, n + 1);
-			}
-			for (size_t k = kneg(p, k_0, r); k < k_range; k += p)
-			{
-				bmap.set(k, n);
-			}
+			for (size_t k = kpos(p, k_0, r); k < k_range; k += p) bmap.set3(k, n - 1); // n - 1, n, n + 1
+			for (size_t k = kneg(p, k_0, r); k < k_range; k += p) bmap.set(k, n); // n
 			r = half_mod(r, p);	// 1/2^(n_min + n) / 15 (mod p)
 		}
 
-		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
-		{
-			bmap.set(k, _n_range - 1 - 1);
-			bmap.set(k, _n_range - 1);
-		}
-		for (size_t k = kneg(p, k_0, r); k < k_range; k += p)
-		{
-			bmap.set(k, _n_range - 1);
-		}
-		r = half_mod(r, p);	// 1/2^(n_min + _n_range) / 15 (mod p)
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p) bmap.set2(k, _n_range - 2); // (_n_range - 1) - 1, (_n_range - 1), (_n_range - 1) + 1
+		for (size_t k = kneg(p, k_0, r); k < k_range; k += p) bmap.set(k, _n_range - 1); // (_n_range - 1)
+		r = half_mod(r, p);	// 1/2^(n_min + n_range) / 15 (mod p)
 
-		for (size_t k = kpos(p, k_0, r); k < k_range; k += p)
-		{
-			bmap.set(k, _n_range - 1);
-		}
+		for (size_t k = kpos(p, k_0, r); k < k_range; k += p) bmap.set(k, _n_range - 1); // _n_range - 1, _n_range, _n_range + 1
+		// for (size_t k = kneg(p, k_0, r); k < k_range; k += p); // _n_range
 	}
 
 public:
-	qsieve(const uint64_t p_max, const uint64_t k_min, const uint64_t k_max) : _p_min(2), _p_max(p_max), _k_min(k_min), _k_max(k_max),
-		_k_range(size_t(k_max - k_min) / 30 + 1)
+	qsieve(const uint64_t p_max, const uint64_t k_min, const uint64_t k_max) : _p_min(2), _p_max(p_max), _k_min_15(k_min / 15), _k_range(size_t(k_max - k_min) / 30 + 1)
 	{
 		std::cout << "k_min = " << k_min << ", k_max = " << k_max << ", n_min = " << _n_min << ", n_max = " << _n_min + _n_range - 1 << std::endl;
 
@@ -404,7 +381,7 @@ public:
 		std::thread t_gen_r([=] { gen_r(); }); t_gen_r.detach();
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-		bitmap bmap(_k_range, _n_range);
+		bitmap64 bmap(_k_range);	// _n_range must be 64
 
 		std::cout << "Bitmap size: " << bmap.size() / (8 << 20) << " MB" << std::endl;
 
@@ -422,7 +399,7 @@ public:
 				const PR & pr = pr_array.pr[i];
 				const uint64_t p = pr.p, r = pr.r;
 				if (duration == 0) { std::cout << p << "\r"; std::cout.flush(); }
-				if (p < p_max) { last_p = p; sieve(bmap, p, r); }
+				if (p < p_max) { last_p = p; fill_sieve(bmap, p, r); }
 			}
 
 			const auto t1 = std::chrono::steady_clock::now();
@@ -442,17 +419,19 @@ public:
 		const size_t expected = size_t(0.41252 * (k_max - k_min + 1) * _n_range / std::pow(std::log(double(p_max)), 4));
 		std::cout << bmap.count() << " candidates, " << expected << " expected, " << std::lrint(duration) << " sec." << std::endl;
 
-/*		for (size_t k = 0; k < _k_range; ++k)
+		std::ofstream outFile("qsieve.log");
+		for (size_t k = 0, k_range = _k_range; k < k_range; ++k)
 		{
 			for (size_t n = 0; n < _n_range; ++n)
 			{
 				if (!bmap.get(k, n))
 				{
-					std::cout << k_min + 30 * k << ", " << _n_min + n << std::endl;
+					outFile << k_min + 30 * k << "\t" << _n_min + n << std::endl;
 				}
 			}
 		}
-*/	}
+		outFile.close();
+	}
 
 	virtual ~qsieve() {}
 };
@@ -467,7 +446,7 @@ int main(int argc, char * argv[])
 	// uint64_t p_max = (argc > 1) ? std::atoll(argv[1]) : uint64_t(-1) / 4;
 	// uint64_t T = 1; for (size_t i = 0; i < 8; ++i) T *= 10;	// 6705 candidates for 1000000
 	uint64_t T = 1; for (size_t i = 0; i < 12; ++i) T *= 10;
-	uint64_t p_max = (argc > 1) ? std::atoll(argv[1]) : T;
+	uint64_t p_max = 1000000;
 	if (p_max < 7) p_max = 7;
 	if (p_max > uint64_t(-1) / 4) p_max = uint64_t(-1) / 4;
 

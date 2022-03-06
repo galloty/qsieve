@@ -1,5 +1,5 @@
 \documentclass[a4paper, 12pt]{article}
-\usepackage[dvips]{graphicx}
+\usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{amsmath, amsthm}
 
@@ -98,7 +98,7 @@ $C_f$ is a sieving constant. Let $S$ be a set containing $n$ $m$-tuples of rando
 $S$ is sieved for $p \leq p_{max}$: an element is removed from the set if at least one
 integer of the $m$-tuple is divisible by $p$. The expected number of remaining elements
 is $\prod_{p\leq p_{max}}\left(1 - 1/p\right)^m\,n$. If the $m$-tuples of the set are
-generated with the polynomials $f_i(n)$ then the expected number of remaining elements
+generated with the polynomials $f_i$ then the expected number of remaining elements
 is $\cand_{p_{max}}(n) = \prod_{p\leq p_{max}}\left(1 - w(p)/p\right)\,n$.
 
 \medskip
@@ -144,8 +144,9 @@ quadruplet & $4\,k - 1, 8\,k - 1, 8\,k + 1, 16\, k - 1$ & 3042 & 2978.2
 \medskip
 
 Mertens' third theorem is $\lim_{n \to \infty} \log n\, \prod_{p \leq n} \left(1 - 1/p\right)
-= e^{-\gamma},$ where $\gamma \approx 0.57721566$ is the Euler's constant. We have
-$\cand_{p_{max}}(n) = \prod_{p\leq p_{max}}\left(1 - w(p)/p\right)\,n
+= e^{-\gamma},$ where $\gamma \approx 0.57721566$ is the Euler's constant.
+
+We have $\cand_{p_{max}}(n) = \prod_{p\leq p_{max}}\left(1 - w(p)/p\right)\,n
 \approx C_f \prod_{p\leq p_{max}}\left(1 - 1/p\right)^m\,n$, hence
 \[\cand_{p_{max}}(n) \approx C_f\, \left(\frac{e^{-\gamma}}{\log p_{max}}\right)^m\, n.\]
 
@@ -166,7 +167,7 @@ If $n$ is fixed and $k$ is odd, $k_1 \leq k \leq k_2$ and $1 \ll k\,2^n$, we hav
 \[\pi_s \approx \frac{0.73472856}{\left(\log p_{max}\right)^3}
  \int_{k_1}^{k_2} \frac{dt}{\log(t\,2^n)}.\]
 
-Applying $\mathcal{P}(N)$ to twin primes:
+Applying $\mathcal{P}(N)$ twice for twin primes, we obtain
 \[\pi_t \approx \frac{1.30860477}{\left(\log p_{max}\right)^2}
  \int_{k_1}^{k_2} \frac{dt}{\log(t\,2^n)^2},\]
  and $\pi_{SG} \approx 2\,\pi_t$.
@@ -231,5 +232,20 @@ $10^{15}$ & 1,306,000,000 & 34,877 & 0.93 & 1.86
 \end{center}
 
 In practice, we can set $3321925 \leq n \leq 3321925 + 63$ and $1 \leq k \leq 2^{46}$.
+The subset $1 \leq k \leq 2^{32}$ was sieved for $p_{max} < 10^{12}$. 194535 candidates
+were expected and 195115 remain. 
+
+\medskip
+
+If the range is sieved to $10^{15}$ on GPU and that the number of mega-primes found
+each year is still growing at the same rate then a mega twin prime could be discovered
+within the next ten years.
+
+\begin{center}
+Number of known mega-primes per year
+\par\nobreak
+\smallskip
+\includegraphics[scale=1.6]{mega_year.png}
+\end{center}
 
 \end{document}
